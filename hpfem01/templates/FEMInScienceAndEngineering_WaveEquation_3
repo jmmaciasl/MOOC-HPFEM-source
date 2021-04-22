@@ -1,0 +1,141 @@
+"""
+FEMInScienceAndEngineering_WaveEquation
+"""
+
+#@title
+# Setup system environment and define utility functions and variables
+
+
+from google.colab import files
+
+#!update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.6 3
+#!apt install -y software-properties-common python3-software-properties
+#!add-apt-repository -y ppa:fenics-packages/fenics
+#!apt-get install fenics
+
+try:
+    import dolfin
+except ImportError as e:
+    !apt-get install -y -qq software-properties-common
+    !add-apt-repository -y ppa:fenics-packages/fenics
+    !apt-get update -qq
+    !apt install -y --no-install-recommends fenics
+    !sed -i "s|#if PETSC_VERSION_MAJOR == 3 && PETSC_VERSION_MINOR <= 8 && PETSC_VERSION_RELEASE == 1|#if 1|" /usr/include/dolfin/la/PETScLUSolver.h
+    !rm -rf /usr/lib/python3/dist-packages/mpi4py*
+    !rm -rf /usr/lib/python3/dist-packages/petsc4py*
+    !rm -rf /usr/lib/python3/dist-packages/slepc4py*
+    !rm -rf /usr/lib/petsc/lib/python3/dist-packages/dolfin*
+    !rm -rf /usr/lib/petsc/lib/python3/dist-packages/mshr*
+    !wget "https://drive.google.com/uc?export=download&id=1cT_QBJCOW_eL3BThnval3bcpb8o0w-Ad" -O /tmp/mpi4py-2.0.0-cp37-cp37m-linux_x86_64.whl
+    !wget "https://drive.google.com/uc?export=download&id=119i49bxlGn1mrnhTNmOvM4BqmjrT9Ppr" -O /tmp/petsc4py-3.7.0-cp37-cp37m-linux_x86_64.whl
+    !wget "https://drive.google.com/uc?export=download&id=1-1tVfu8qz3bRC2zvR8n3RESpesWqNnn6" -O /tmp/slepc4py-3.7.0-cp37-cp37m-linux_x86_64.whl
+    !wget "https://drive.google.com/uc?export=download&id=1-3qY4VIJQaXVO1HfGQIzTIURIeJbvX-9" -O /tmp/fenics_dolfin-2019.2.0.dev0-cp37-cp37m-linux_x86_64.whl
+    !wget "https://drive.google.com/uc?export=download&id=1-5SMjgjMuee_9WLeYtGe8N_lvipWEN7W" -O /tmp/mshr-2019.2.0.dev0-cp37-cp37m-linux_x86_64.whl
+    !pip3 install /tmp/mpi4py-2.0.0-cp37-cp37m-linux_x86_64.whl --upgrade
+    !pip3 install /tmp/petsc4py-3.7.0-cp37-cp37m-linux_x86_64.whl --upgrade
+    !pip3 install /tmp/slepc4py-3.7.0-cp37-cp37m-linux_x86_64.whl --upgrade
+    !pip3 install /tmp/fenics_dolfin-2019.2.0.dev0-cp37-cp37m-linux_x86_64.whl --upgrade
+    !pip3 install /tmp/mshr-2019.2.0.dev0-cp37-cp37m-linux_x86_64.whl --upgrade
+    !pip3 -q install --upgrade sympy
+    import dolfin
+
+
+!wget -c http://www.csc.kth.se/~jjan/digitalmath/plot_u.py
+# !wget -c -O ParaView-5.9.0-osmesa-MPI-Linux-Python3.8-64bit.tar.gz 'https://www.paraview.org/paraview-downloads/download.php?submit=Download&version=v5.9&type=binary&os=Linux&downloadFile=ParaView-5.9.0-osmesa-MPI-Linux-Python3.8-64bit.tar.gz'
+# !tar xzvf ParaView-5.9.0-osmesa-MPI-Linux-Python3.8-64bit.tar.gz --skip-old-files
+
+# Commented out IPython magic to ensure Python compatibility.
+# %%writefile file.py
+# 
+# # Copyright (c) 2017-2018 Johan Jansson, Måns Andersson, Cem Degirmenci, David Kamensky, FEniCS community contributions 
+#
+
+# Commented out IPython magic to ensure Python compatibility.
+
+# %matplotlib inline                                                         
+# %run /home/fenics/fenics-matplotlib.py                                                                                                                                                                                                                        
+
+import matplotlib.pyplot as plt
+from dolfin import *; 
+from mshr import *; 
+from IPython.display import display, clear_output; 
+import time 
+import logging; logging.getLogger('FFC').setLevel(logging.WARNING) 
+import numpy as np 
+
+set_log_active(False)
+
+def plot_compact(u, t, stepcounter): # Compact plot utility function
+    if stepcounter % 5 == 0:
+        ax.cla(); fig = plt.gcf(); fig.set_size_inches(16, 6.5)
+        plt.subplot(1, 2, 1); mplot_function(u); plt.title("Wave") # Plot norm of velocity
+        plt.colorbar(); # plt.axis(G)
+        plt.subplot(1, 2, 2);
+        plt.triplot(mesh2triang(mesh)); plt.title("Mesh") # Plot mesh
+        plt.suptitle("Wave - t: %f" % (t)); plt.tight_layout(); clear_output(wait=True); display(pl) 
+
+XMIN, XMAX = -1.0, 1.0;
+YMIN, YMAX = -1.0, 1.0;
+G = [XMIN, XMAX, YMIN, YMAX];
+mresolution = 20;
+
+# mesh = RectangleMesh(Point(XMIN,YMIN), Point(XMAX, YMAX), mresolution, mresolution, 'crossed')
+mesh = generate_mesh(Rectangle(Point(G[0], G[2]), Point(G[1], G[3])), mresolution) 
+
+Q = FunctionSpace(mesh, "CG", 1); 
+# W = Q * Q; 
+Element1 = FiniteElement("CG", mesh.ufl_cell(), 1)
+Element2 = FiniteElement("CG", mesh.ufl_cell(), 1)
+# Define the mixed element
+W_elem = MixedElement([Element1, Element2])
+# Define the mixed function space
+W = FunctionSpace(mesh, W_elem)
+
+h = CellDiameter(mesh);
+(p, q) = TestFunctions(W); 
+w = Function(W); 
+(u, v) = (w[0], w[1]);
+u0 = Function(Q); v0 = Function(Q);
+
+k = 0.000005; t = 0; T = 0.001
+a = 3000;
+
+eps = 1e-2
+
+source_u = Expression("sin(-a * 10* t)", a=a, t=0, domain=mesh, degree=2);
+source_v = Expression("-a*10*cos(-a * 10* t)", a=a, t=0, domain=mesh, degree=2);
+
+mk0 = Expression("(sqrt((x[0]-xc)*(x[0]-xc)+(x[1]-yc)*(x[1]-yc))<eps)", xc=(XMIN+XMAX)/2.0 , yc=(YMIN+YMAX)/2.0, eps=eps, domain=mesh, degree=1);
+mk1 = Expression("(sqrt((x[0]-xc)*(x[0]-xc)+(x[1]-yc)*(x[1]-yc))<eps)", xc=XMIN , yc=(YMIN+YMAX)/2.0, eps=eps, domain=mesh, degree=1);
+mk2 = Expression("(sqrt((x[0]-xc)*(x[0]-xc)+(x[1]-yc)*(x[1]-yc))<eps)", xc=XMAX , yc=(YMIN+YMAX)/2.0, eps=eps, domain=mesh, degree=1);
+mk3 = Expression("(sqrt((x[0]-xc)*(x[0]-xc)+(x[1]-yc)*(x[1]-yc))<eps)", xc=(XMIN+XMAX)/2.0 , yc=YMIN, eps=eps, domain=mesh, degree=1);
+mk4 = Expression("(sqrt((x[0]-xc)*(x[0]-xc)+(x[1]-yc)*(x[1]-yc))<eps)", xc=(XMIN+XMAX)/2.0 , yc=YMAX, eps=eps, domain=mesh, degree=1);
+
+mk = mk1
+
+gamma = 1e6
+theta = 0.5;
+while t < T: # Time-stepping loop        
+    vm = theta*v + (1.0-theta)*v0;
+    um = theta*u + (1.0-theta)*u0;
+    source_u.t = t
+    source_v.t = t
+    
+    ru_bc = gamma*mk*(u-source_u)*p*dx
+    rv_bc = gamma*mk*(v-source_v)*q*dx
+    
+    ru=(u-u0)/k*p*dx - vm*p*dx + ru_bc
+    rv=(v-v0)/k*q*dx + a*a*inner(grad(um),grad(q))*dx + rv_bc
+    r = ru + rv;
+    
+    solve(r==0, w);
+    
+    # Shift to next timestep                                                     
+    u0 = project(u, Q);
+    v0 = project(v, Q);
+
+    # visualize the solution
+    pl, ax = plt.subplots();
+    plot_compact(u0, t, 0)
+    plt.close();
+    t += k;
